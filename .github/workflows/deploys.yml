@@ -38,7 +38,7 @@ jobs:
         run: |
           cd lambda_function
           mkdir package
-          pip install \
+          pip --python 3.11 install \
             --platform manylinux2014_x86_64 \
             --target ./package \
             --implementation cp \
