@@ -79,10 +79,10 @@ jobs:
                 while true; do
                     Updated_status=${aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text}
 
-                    if [["$Updated_status" == "Successful"]]; then
+                    if [[ "$Updated_status" == "Successful" ]]; then
                         echo "status sucessfully updated...."
                         break
-                    elif ["$Updated_status" == "Failed"]; then
+                    elif [ "$Updated_status" == "Failed" ]; then
                         echo "function code update failed."
                         exit 1
                     else
@@ -95,5 +95,5 @@ jobs:
                 aws lambda update-function-configuration \
                     --function-name $function_name \
                     --region $region \
-                    --enviorment "$ENV_vars"
+                    --environment "$ENV_vars"
                 fi
