@@ -65,7 +65,7 @@ jobs:
                     --handler app.lambda_handler \
                     --timeout 300 \
                     --zip-file fileb://lambda.zip \
-                    --region $region
+                    --region $region \
                     --environment "$ENV_VARS"
             else
                 echo "updating lambda function  $function_name"
