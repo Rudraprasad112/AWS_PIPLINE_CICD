@@ -95,5 +95,5 @@ jobs:
                 aws lambda update-function-configuration \
                     --function-name $function_name \
                     --region $region \
-                    --environment "$ENV_vars"
+                    --environment "$ENV_VARS"
                 fi
