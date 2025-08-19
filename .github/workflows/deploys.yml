@@ -77,7 +77,7 @@ jobs:
                 # wait for update function
                 echo "wait for updating function $function_name"
                 while true; do
-                    Updated_status=${aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text}
+                    Updated_status=$(aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text)
 
                     if [[ "$Updated_status" == "Successful" ]]; then
                         echo "status sucessfully updated...."
