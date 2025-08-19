@@ -1,0 +1,97 @@
+name: Deploy Lambda
+
+on:
+    push:
+        branches:
+            - main
+            - test
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+
+        steps:
+        - name: Checkout code
+          uses: actions/checkout@v3
+        
+        - name: install dependcies
+          run: |
+            sudo apt-get update
+            sudo apt-get install -y python3.11 python3.11-venv python3-pip jq zip
+            pip3 install boto3
+        
+        - name: Set environment variables
+          run: |
+            if [[ "${{github.ref_name}}" == "main"]]; then
+                echo "ENV = prod" >> $GITHUB_ENV
+                echo "API_KEY = prod_api_key" >> $GITHUB_ENV
+                echo "LOG_LEVEL = INFO" >> $GITHUB_ENV
+            else
+                echo "ENV = test" >> $GITHUB_ENV
+                echo "API_KEY = test_api_key" >> $GITHUB_ENV
+                echo "LOG_LEVEL = DEBUG" >> $GITHUB_ENV
+        - name: package lambda function
+          run: |
+            cd lambda_function 
+            python3.11 -m venv myenv
+            source myenv/bin/activate
+            mkdir package
+            pip install --no-cache-dir -r requirments.txt -t ./package
+            cp app.py ./package/
+            cd package
+            zip -r ../../lambda.zip .
+            cd ../..
+        - name: Doploy to Aws lambda
+          env:
+            AWS_ACCESS_KEY_ID : ${{ secrets.AWS_ACCESS_KEY_ID}}
+            AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            AWS_DEFAULT_REGION: eu-north-1
+          run: |
+            function_name = "cicd_lambda_${{ github.ref_name}}"
+            region = "eu-north-1"
+            echo "deploying to lambda function :$function_name"
+
+            # check lambda function exist or not
+            function_exists = $(aws lambda get-function --function-name $function_name --region $region || echo 'false')
+
+            ENV_VARS = "Variables = {ENV = ${{ env.ENV }},API_KEY = ${{env.API_KEY}},LOG_LEVEL = ${{ env.LOGLEVEL}}}"
+            if [[ "$function_name" == 'false']]; then
+                echo "create a new function $function_name..."
+                aws lambda create-function \
+                    --function-name $function_name \
+                    --runtime python3.11 \
+                    --role arn:aws:iam::503015902968:role/CICD_PIPLINE\
+                    --handler app.lambda_handler \
+                    --timeout 300 \
+                    --zip-file fileb://lambda.zip \
+                    --region $region
+                    --enviorment "$ENV_VARS"
+            else
+                echo "updating lambda function  $function_name"
+                aws lambda update-function-code \
+                    --function-name $function_name
+                    --region $region \
+                    --zip-file fileb://lambda.zip
+                
+                # wait for update function
+                echo "wait for updating function $function_name"
+                while true; do
+                    Updated_status = ${aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text}
+
+                    if [["$Updated_status" == "Sucessful"]]; then
+                        echo "status sucessfully updated...."
+                        break
+                    elif ["$Updated_status" == "Failed"]; then
+                        echo "function code update failed."
+                        exit 1
+                    else
+                        echo "update in progress, waiting..."
+                        sleep
+                    fi
+                done
+
+                # update function configuration
+                aws lambda update-function-configuration \
+                    --function-name $function_name \
+                    --region $region \
+                    --enviorment "$ENV_vars"
+                fi
