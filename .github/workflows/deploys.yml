@@ -2123,3 +2123,4 @@ jobs:
                   --region $region \
                   --environment Variables="{ENV=${ENV},API_KEY=${API_KEY},LOG_LEVEL=${LOG_LEVEL}}"
           fi
+          
