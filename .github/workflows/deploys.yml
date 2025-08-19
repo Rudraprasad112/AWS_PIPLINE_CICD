@@ -1,3 +1,1917 @@
+Skip to content
+Chat history
+
+You said:
+create a branch in github using cli
+ChatGPT said:
+To create a branch in GitHub using CLI, you actually use Git CLI (not GitHub CLI).
+Here are the steps:
+
+First, check your current branch:
+
+git branch
+Create a new branch (example: feature-1):
+
+git branch feature-1
+Switch to that branch:
+
+git checkout feature-1
+👉 Or you can do both in one command:
+
+git checkout -b feature-1
+Push the branch to GitHub:
+
+git push -u origin feature-1
+✨ Now your new branch feature-1 exists in both local and GitHub remote.
+
+Do you want me to also show you how to do this with GitHub CLI (gh)?
+
+You said:
+git checkout test     
+error: pathspec 'test' did not match any file(s) known to git
+ChatGPT said:
+That error means the branch test doesn’t exist yet in your repo.
+git checkout <branch> only works if the branch already exists locally (or on remote).
+
+👉 You need to create it first:
+
+git checkout -b test
+This creates a new branch called test and switches to it.
+
+Then push it to GitHub:
+
+git push -u origin test
+✅ Now you’ll have a new branch named test both locally and on GitHub.
+
+Do you want me to explain why you saw that error in simple words?
+
+You said:
+Error
+No event triggers defined in on
+
+show github action
+ChatGPT said:
+That error comes when your GitHub Actions workflow YAML file has no on: block (which tells when the workflow should run).
+
+Here’s a simple example workflow (.github/workflows/ci.yml):
+
+name: CI Pipeline
+
+on:                # 👈 event triggers
+  push:            # run on every push
+    branches:
+      - main
+      - test
+  pull_request:    # run on pull requests
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest
+Explanation in very easy words:
+on: → tells GitHub when to run (push, pull_request, etc.).
+
+jobs: → group of tasks.
+
+steps: → actions/commands inside a job.
+
+👉 In your case, error came because you missed this part:
+
+on:
+  push:
+    branches:
+      - main
+Do you want me to make a very minimal working example workflow (just “Hello World”) so you can test?
+
+You said:
+deploy
+Process completed with exit code 100.
+ChatGPT said:
+Got it 👍.
+The message Process completed with exit code 100 means your GitHub Action job ran a command that failed and returned code 100.
+
+⚠️ Important: GitHub Actions doesn’t create this error itself — it just shows what your script/command returned.
+
+Common cases where exit code 100 happens:
+
+apt-get / apt → package not found or update issues.
+
+pip → package install failure.
+
+Docker → image not found or pull failed.
+
+custom deploy script → exited with error.
+
+👉 To help you fix this, I need to see:
+
+Your workflow YAML (.github/workflows/xxx.yml).
+
+The last few log lines before the error (they usually show what command failed).
+
+Do you want to paste your workflow file here so I can point out the problem?
+
+You said:
+name: Deploy Lambda
+
+on:
+    push:
+        branches:
+            - main
+            - test
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+
+        steps:
+        - name: Checkout code
+          uses: actions/checkout@v3
+        
+        - name: install dependcies
+          run: |
+            sudo apt-get update
+            sudo apt-get install -y python3.11 python3.11-venv python3-pip jq zip
+            pip3 install boto3
+        
+        - name: Set environment variables
+          run: |
+            if [[ "${{github.ref_name}}" == "main"]]; then
+                echo "ENV = prod" >> $GITHUB_ENV
+                echo "API_KEY = prod_api_key" >> $GITHUB_ENV
+                echo "LOG_LEVEL = INFO" >> $GITHUB_ENV
+            else
+                echo "ENV = test" >> $GITHUB_ENV
+                echo "API_KEY = test_api_key" >> $GITHUB_ENV
+                echo "LOG_LEVEL = DEBUG" >> $GITHUB_ENV
+        - name: package lambda function
+          run: |
+            cd lambda_function 
+            python3.11 -m venv myenv
+            source myenv/bin/activate
+            mkdir package
+            pip install --no-cache-dir -r requirments.txt -t ./package
+            cp app.py ./package/
+            cd package
+            zip -r ../../lambda.zip .
+            cd ../..
+        - name: Doploy to Aws lambda
+          env:
+            AWS_ACCESS_KEY_ID : ${{ secrets.AWS_ACCESS_KEY_ID}}
+            AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            AWS_DEFAULT_REGION: eu-north-1
+          run: |
+            function_name = "cicd_lambda_${{ github.ref_name}}"
+            region = "eu-north-1"
+            echo "deploying to lambda function :$function_name"
+
+            # check lambda function exist or not
+            function_exists = $(aws lambda get-function --function-name $function_name --region $region || echo 'false')
+
+            ENV_VARS = "Variables = {ENV = ${{ env.ENV }},API_KEY = ${{env.API_KEY}},LOG_LEVEL = ${{ env.LOGLEVEL}}}"
+            if [[ "$function_name" == 'false']]; then
+                echo "create a new function $function_name..."
+                aws lambda create-function \
+                    --function-name $function_name \
+                    --runtime python3.11 \
+                    --role arn:aws:iam::503015902968:role/CICD_PIPLINE\
+                    --handler app.lambda_handler \
+                    --timeout 300 \
+                    --zip-file fileb://lambda.zip \
+                    --region $region
+                    --enviorment "$ENV_VARS"
+            else
+                echo "updating lambda function  $function_name"
+                aws lambda update-function-code \
+                    --function-name $function_name
+                    --region $region \
+                    --zip-file fileb://lambda.zip
+                
+                # wait for update function
+                echo "wait for updating function $function_name"
+                while true; do
+                    Updated_status = ${aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text}
+
+                    if [["$Updated_status" == "Sucessful"]]; then
+                        echo "status sucessfully updated...."
+                        break
+                    elif ["$Updated_status" == "Failed"]; then
+                        echo "function code update failed."
+                        exit 1
+                    else
+                        echo "update in progress, waiting..."
+                        sleep
+                    fi
+                done
+
+                # update function configuration
+                aws lambda update-function-configuration \
+                    --function-name $function_name \
+                    --region $region \
+                    --enviorment "$ENV_vars"
+                fi
+ChatGPT said:
+Thanks for sharing your workflow 👍.
+I can see several syntax and spelling mistakes in your YAML + bash that will cause exit code 100 or other failures. Let’s fix them step by step.
+
+🔴 Problems in your file
+Spaces inside if test
+
+if [[ "${{github.ref_name}}" == "main"]]; then
+❌ → missing space before ]].
+
+✅ Correct:
+
+if [[ "${{ github.ref_name }}" == "main" ]]; then
+Environment variable names
+
+echo "ENV = prod" >> $GITHUB_ENV
+❌ Spaces are not allowed (ENV = prod won’t set properly).
+
+✅ Correct:
+
+echo "ENV=prod" >> $GITHUB_ENV
+Typos
+
+requirments.txt → should be requirements.txt.
+
+Doploy → should be Deploy.
+
+enviorment → should be environment.
+
+Sucessful → should be Successful.
+
+Bash assignments with spaces
+
+function_name = "cicd_lambda_${{ github.ref_name}}"
+❌ This is invalid in bash.
+
+✅ Correct:
+
+function_name="cicd_lambda_${{ github.ref_name }}"
+Same issue with:
+
+Updated_status = ${aws ...}
+✅ Should be:
+
+Updated_status=$(aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text)
+Wrong --environment format
+
+--enviorment "$ENV_VARS"
+❌ Misspelled + wrong JSON format.
+
+✅ Example:
+
+--environment "Variables={ENV=$ENV,API_KEY=$API_KEY,LOG_LEVEL=$LOG_LEVEL}"
+Sleep command
+
+sleep
+❌ Needs a number.
+
+✅ Example:
+
+sleep 5
+🟢 Fixed version (shortened)
+Here’s a cleaned-up version of your workflow:
+
+name: Deploy Lambda
+
+on:
+  push:
+    branches:
+      - main
+      - test
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3.11 python3.11-venv python3-pip jq zip
+          pip3 install boto3
+
+      - name: Set environment variables
+        run: |
+          if [[ "${{ github.ref_name }}" == "main" ]]; then
+            echo "ENV=prod" >> $GITHUB_ENV
+            echo "API_KEY=prod_api_key" >> $GITHUB_ENV
+            echo "LOG_LEVEL=INFO" >> $GITHUB_ENV
+          else
+            echo "ENV=test" >> $GITHUB_ENV
+            echo "API_KEY=test_api_key" >> $GITHUB_ENV
+            echo "LOG_LEVEL=DEBUG" >> $GITHUB_ENV
+          fi
+
+      - name: Package lambda function
+        run: |
+          cd lambda_function
+          python3.11 -m venv myenv
+          source myenv/bin/activate
+          mkdir package
+          pip install --no-cache-dir -r requirements.txt -t ./package
+          cp app.py ./package/
+          cd package
+          zip -r ../../lambda.zip .
+          cd ../..
+
+      - name: Deploy to AWS Lambda
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: eu-north-1
+        run: |
+          function_name="cicd_lambda_${{ github.ref_name }}"
+          region="eu-north-1"
+          echo "Deploying to lambda function: $function_name"
+
+          # Check if function exists
+          if ! aws lambda get-function --function-name $function_name --region $region > /dev/null 2>&1; then
+            echo "Creating new function $function_name..."
+            aws lambda create-function \
+              --function-name $function_name \
+              --runtime python3.11 \
+              --role arn:aws:iam::503015902968:role/CICD_PIPLINE \
+              --handler app.lambda_handler \
+              --timeout 300 \
+              --zip-file fileb://lambda.zip \
+              --region $region \
+              --environment "Variables={ENV=$ENV,API_KEY=$API_KEY,LOG_LEVEL=$LOG_LEVEL}"
+          else
+            echo "Updating function $function_name..."
+            aws lambda update-function-code \
+              --function-name $function_name \
+              --region $region \
+              --zip-file fileb://lambda.zip
+
+            echo "Waiting for update..."
+            while true; do
+              Updated_status=$(aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text)
+              if [[ "$Updated_status" == "Successful" ]]; then
+                echo "Update successful!"
+                break
+              elif [[ "$Updated_status" == "Failed" ]]; then
+                echo "Function code update failed."
+                exit 1
+              else
+                echo "Update in progress, waiting..."
+                sleep 5
+              fi
+            done
+
+            aws lambda update-function-configuration \
+              --function-name $function_name \
+              --region $region \
+              --environment "Variables={ENV=$ENV,API_KEY=$API_KEY,LOG_LEVEL=$LOG_LEVEL}"
+          fi
+👉 With these fixes, your workflow should not fail with exit code 100 anymore.
+
+Do you want me to test this YAML locally in a GitHub Actions simulator (like act) and show you real logs?
+
+You said:
+Run sudo apt-get update
+  sudo apt-get update
+  sudo apt-get install -y python3.11 python3.11-venv python3-pip jq zip
+  pip3 install boto3
+  shell: /usr/bin/bash -e {0}
+Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+Hit:2 http://azure.archive.ubuntu.com/ubuntu noble InRelease
+Get:3 http://azure.archive.ubuntu.com/ubuntu noble-updates InRelease [126 kB]
+Get:4 http://azure.archive.ubuntu.com/ubuntu noble-backports InRelease [126 kB]
+Get:5 http://azure.archive.ubuntu.com/ubuntu noble-security InRelease [126 kB]
+Hit:6 https://packages.microsoft.com/repos/azure-cli noble InRelease
+Get:7 https://packages.microsoft.com/ubuntu/24.04/prod noble InRelease [3600 B]
+Get:8 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages [1337 kB]
+Get:9 http://azure.archive.ubuntu.com/ubuntu noble-updates/main Translation-en [267 kB]
+Get:10 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 Components [175 kB]
+Get:11 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Packages [1121 kB]
+Get:12 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe Translation-en [288 kB]
+Get:13 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Components [377 kB]
+Get:14 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted amd64 Packages [1700 kB]
+Get:15 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted Translation-en [375 kB]
+Get:16 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted amd64 Components [212 B]
+Get:17 http://azure.archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 Components [940 B]
+Get:18 http://azure.archive.ubuntu.com/ubuntu noble-backports/main amd64 Components [7072 B]
+Get:19 http://azure.archive.ubuntu.com/ubuntu noble-backports/universe amd64 Packages [30.2 kB]
+Get:20 http://azure.archive.ubuntu.com/ubuntu noble-backports/universe Translation-en [17.4 kB]
+Get:21 http://azure.archive.ubuntu.com/ubuntu noble-backports/universe amd64 Components [19.2 kB]
+Get:22 http://azure.archive.ubuntu.com/ubuntu noble-backports/restricted amd64 Components [216 B]
+Get:23 http://azure.archive.ubuntu.com/ubuntu noble-backports/multiverse amd64 Components [212 B]
+Get:24 http://azure.archive.ubuntu.com/ubuntu noble-security/main amd64 Packages [1075 kB]
+Get:25 http://azure.archive.ubuntu.com/ubuntu noble-security/main Translation-en [186 kB]
+Get:26 http://azure.archive.ubuntu.com/ubuntu noble-security/main amd64 Components [21.6 kB]
+Get:27 http://azure.archive.ubuntu.com/ubuntu noble-security/universe amd64 Packages [879 kB]
+Get:28 http://azure.archive.ubuntu.com/ubuntu noble-security/universe Translation-en [195 kB]
+Get:29 http://azure.archive.ubuntu.com/ubuntu noble-security/universe amd64 Components [52.2 kB]
+Get:30 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted amd64 Packages [1610 kB]
+Get:31 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted Translation-en [357 kB]
+Get:32 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted amd64 Components [212 B]
+Get:33 http://azure.archive.ubuntu.com/ubuntu noble-security/multiverse amd64 Components [212 B]
+Get:34 https://packages.microsoft.com/ubuntu/24.04/prod noble/main arm64 Packages [33.1 kB]
+Get:35 https://packages.microsoft.com/ubuntu/24.04/prod noble/main amd64 Packages [47.9 kB]
+Fetched 10.6 MB in 1s (8406 kB/s)
+Reading package lists...
+Reading package lists...
+Building dependency tree...
+Reading state information...
+E: Unable to locate package python3.11
+E: Couldn't find any package by glob 'python3.11'
+E: Couldn't find any package by regex 'python3.11'
+E: Unable to locate package python3.11-venv
+E: Couldn't find any package by glob 'python3.11-venv'
+E: Couldn't find any package by regex 'python3.11-venv'
+Error: Process completed with exit code 100.
+ChatGPT said:
+Ah 👍 now the error is clear.
+
+The GitHub Actions runner you’re using (ubuntu-latest → right now Ubuntu 24.04 "Noble") doesn’t have python3.11 in its apt packages anymore. That’s why you get:
+
+E: Unable to locate package python3.11
+✅ Fix options
+Option 1: Use the built-in setup-python action (best way)
+You don’t need apt-get. GitHub provides all Python versions via actions/setup-python.
+
+Replace your install step:
+
+- name: Install Python
+  uses: actions/setup-python@v5
+  with:
+    python-version: '3.11'
+This installs Python 3.11 correctly.
+
+Option 2: Use the default Python (already pre-installed)
+On ubuntu-latest runners, Python 3.12 is already there.
+So you could just use:
+
+- name: Check Python version
+  run: python3 --version
+And skip apt-get install python3.11.
+
+🔧 Recommended fix in your workflow
+- name: Set up Python
+  uses: actions/setup-python@v5
+  with:
+    python-version: '3.11'
+
+- name: Install dependencies
+  run: |
+    pip install boto3
+    pip install -r requirements.txt
+👉 This will remove the exit code 100 problem.
+
+Do you want me to update your whole workflow file with this fix applied?
+
+You said:
+Run if [[ "test" == "main"]]; then
+  if [[ "test" == "main"]]; then
+      echo "ENV=prod" >> $GITHUB_ENV
+      echo "API_KEY=prod_api_key" >> $GITHUB_ENV
+      echo "LOG_LEVEL=INFO" >> $GITHUB_ENV
+  else
+      echo "ENV=test" >> $GITHUB_ENV
+      echo "API_KEY=test_api_key" >> $GITHUB_ENV
+      echo "LOG_LEVEL=DEBUG" >> $GITHUB_ENV
+  shell: /usr/bin/bash -e {0}
+  env:
+    pythonLocation: /opt/hostedtoolcache/Python/3.11.13/x64
+    PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib/pkgconfig
+    Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib
+/home/runner/work/_temp/078aa58a-9bc3-4ab3-b55f-caae4b50accc.sh: line 1: syntax error in conditional expression: unexpected token ;'
+Error: Process completed with exit code 2.
+ChatGPT said:
+Perfect, thanks for pasting the log 👍
+The error is from this line in your workflow:
+
+if [[ "test" == "main"]]; then
+🔴 Problem
+Missing space before ]].
+
+[[ … ]] in bash requires spaces around ==.
+
+✅ Correct syntax
+if [[ "test" == "main" ]]; then
+or in your workflow:
+
+- name: Set environment variables
+  run: |
+    if [[ "${{ github.ref_name }}" == "main" ]]; then
+      echo "ENV=prod" >> $GITHUB_ENV
+      echo "API_KEY=prod_api_key" >> $GITHUB_ENV
+      echo "LOG_LEVEL=INFO" >> $GITHUB_ENV
+    else
+      echo "ENV=test" >> $GITHUB_ENV
+      echo "API_KEY=test_api_key" >> $GITHUB_ENV
+      echo "LOG_LEVEL=DEBUG" >> $GITHUB_ENV
+    fi
+💡 Quick check:
+
+always put a space before ]]
+
+always put a space around ==
+
+Do you want me to fully clean your workflow and give you the ready-to-run fixed YAML (with both the Python and if issues solved)?
+
+You said:
+un if [[ "test" == "main" ]]; then
+  if [[ "test" == "main" ]]; then
+      echo "ENV=prod" >> $GITHUB_ENV
+      echo "API_KEY=prod_api_key" >> $GITHUB_ENV
+      echo "LOG_LEVEL=INFO" >> $GITHUB_ENV
+  else
+      echo "ENV=test" >> $GITHUB_ENV
+      echo "API_KEY=test_api_key" >> $GITHUB_ENV
+      echo "LOG_LEVEL=DEBUG" >> $GITHUB_ENV
+  shell: /usr/bin/bash -e {0}
+  env:
+    pythonLocation: /opt/hostedtoolcache/Python/3.11.13/x64
+    PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib/pkgconfig
+    Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib
+/home/runner/work/_temp/c7e4fd48-fc20-4f4c-b290-773e1c5a370a.sh: line 9: syntax error: unexpected end of file
+Error: Process completed with exit code 2.
+ChatGPT said:
+I see the new error 👍
+
+syntax error: unexpected end of file
+That means your bash block is missing fi at the end of the if statement.
+
+🔴 Your block now:
+if [[ "test" == "main" ]]; then
+  echo "ENV=prod" >> $GITHUB_ENV
+  echo "API_KEY=prod_api_key" >> $GITHUB_ENV
+  echo "LOG_LEVEL=INFO" >> $GITHUB_ENV
+else
+  echo "ENV=test" >> $GITHUB_ENV
+  echo "API_KEY=test_api_key" >> $GITHUB_ENV
+  echo "LOG_LEVEL=DEBUG" >> $GITHUB_ENV
+# ❌ missing fi here
+✅ Fixed version
+- name: Set environment variables
+  run: |
+    if [[ "${{ github.ref_name }}" == "main" ]]; then
+      echo "ENV=prod" >> $GITHUB_ENV
+      echo "API_KEY=prod_api_key" >> $GITHUB_ENV
+      echo "LOG_LEVEL=INFO" >> $GITHUB_ENV
+    else
+      echo "ENV=test" >> $GITHUB_ENV
+      echo "API_KEY=test_api_key" >> $GITHUB_ENV
+      echo "LOG_LEVEL=DEBUG" >> $GITHUB_ENV
+    fi
+✔️ Always close an if with fi in bash.
+That should remove the unexpected end of file error.
+
+Do you want me to clean and give you the full corrected workflow YAML so you can copy-paste directly?
+
+You said:
+Run function_name="cicd_lambda_test"
+  function_name="cicd_lambda_test"
+  region="eu-north-1"
+  echo "deploying to lambda function :$function_name"
+  
+  # check lambda function exist or not
+  function_exists=$(aws lambda get-function --function-name $function_name --region $region || echo 'false')
+  
+  ENV_VARS="Variables={ENV=test,API_KEY=test_api_key,LOG_LEVEL=}"
+  if [[ "$function_name" == 'false']]; then
+      echo "create a new function $function_name..."
+      aws lambda create-function \
+          --function-name $function_name \
+          --runtime python3.11 \
+          --role arn:aws:iam::503015902968:role/CICD_PIPLINE\
+          --handler app.lambda_handler \
+          --timeout 300 \
+          --zip-file fileb://lambda.zip \
+          --region $region
+          --environment "$ENV_VARS"
+  else
+      echo "updating lambda function  $function_name"
+      aws lambda update-function-code \
+          --function-name $function_name
+          --region $region \
+          --zip-file fileb://lambda.zip
+      
+      # wait for update function
+      echo "wait for updating function $function_name"
+      while true; do
+          Updated_status=${aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text}
+  
+          if [["$Updated_status" == "Successful"]]; then
+              echo "status sucessfully updated...."
+              break
+          elif ["$Updated_status" == "Failed"]; then
+              echo "function code update failed."
+              exit 1
+          else
+              echo "update in progress, waiting..."
+              sleep 5
+          fi
+      done
+  
+      # update function configuration
+      aws lambda update-function-configuration \
+          --function-name $function_name \
+          --region $region \
+          --enviorment "$ENV_vars"
+      fi
+  shell: /usr/bin/bash -e {0}
+  env:
+    pythonLocation: /opt/hostedtoolcache/Python/3.11.13/x64
+    PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib/pkgconfig
+    Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib
+    ENV: test
+    API_KEY: test_api_key
+    LOG_LEVEL: DEBUG
+    AWS_ACCESS_KEY_ID: ***
+    AWS_SECRET_ACCESS_KEY: ***
+    AWS_DEFAULT_REGION: eu-north-1
+deploying to lambda function :cicd_lambda_test
+An error occurred (AccessDeniedException) when calling the GetFunction operation: User: arn:aws:iam::503015902968:user/Temp_user is not authorized to perform: lambda:GetFunction on resource: arn:aws:lambda:eu-north-1:503015902968:function:cicd_lambda_test because no identity-based policy allows the lambda:GetFunction action
+/home/runner/work/_temp/5e331e62-6224-42fe-bdd3-4ae6c6c91df4.sh: line 9: syntax error in conditional expression: unexpected token ;'
+Error: Process completed with exit code 2.
+ChatGPT said:
+Thanks for pasting the logs 🙏.
+There are two separate issues here:
+
+1. AWS AccessDeniedException
+User ... is not authorized to perform: lambda:GetFunction
+This means the IAM user/role (Temp_user) that your GitHub Action is using doesn’t have permission for lambda:GetFunction (and probably lambda:CreateFunction, lambda:UpdateFunction, etc.).
+
+✅ Fix in AWS IAM:
+
+Go to IAM → Users → Temp_user → Permissions.
+
+Attach a policy that allows Lambda actions, e.g. AWSLambda_FullAccess or a custom policy:
+
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "lambda:*"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+👉 Without this, your Action cannot deploy to Lambda.
+
+2. Bash syntax error
+syntax error in conditional expression: unexpected token `;'
+That comes from lines like:
+
+if [[ "$function_name" == 'false']]; then
+❌ Problems:
+
+You are checking "$function_name" instead of "$function_exists".
+
+Missing space before ]].
+
+✅ Correct check:
+
+if [[ "$function_exists" == "false" ]]; then
+3. Other typos in your script
+Updated_status=${aws lambda ...} ❌
+should be
+Updated_status=$(aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text) ✅
+
+--enviorment ❌ → --environment ✅
+
+$ENV_vars ❌ → $ENV_VARS ✅
+
+🔧 Fixed deploy step
+Here’s the corrected shell block for your workflow:
+
+function_name="cicd_lambda_${{ github.ref_name }}"
+region="eu-north-1"
+echo "deploying to lambda function: $function_name"
+
+# check lambda function exist or not
+function_exists=$(aws lambda get-function --function-name $function_name --region $region 2>/dev/null || echo 'false')
+
+ENV_VARS="Variables={ENV=$ENV,API_KEY=$API_KEY,LOG_LEVEL=$LOG_LEVEL}"
+
+if [[ "$function_exists" == "false" ]]; then
+    echo "Creating a new function $function_name..."
+    aws lambda create-function \
+        --function-name $function_name \
+        --runtime python3.11 \
+        --role arn:aws:iam::503015902968:role/CICD_PIPLINE \
+        --handler app.lambda_handler \
+        --timeout 300 \
+        --zip-file fileb://lambda.zip \
+        --region $region \
+        --environment "$ENV_VARS"
+else
+    echo "Updating lambda function $function_name..."
+    aws lambda update-function-code \
+        --function-name $function_name \
+        --region $region \
+        --zip-file fileb://lambda.zip
+
+    echo "Waiting for update..."
+    while true; do
+        Updated_status=$(aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text)
+        if [[ "$Updated_status" == "Successful" ]]; then
+            echo "Update successful!"
+            break
+        elif [[ "$Updated_status" == "Failed" ]]; then
+            echo "Function code update failed."
+            exit 1
+        else
+            echo "Update in progress, waiting..."
+            sleep 5
+        fi
+    done
+
+    aws lambda update-function-configuration \
+        --function-name $function_name \
+        --region $region \
+        --environment "$ENV_VARS"
+fi
+✅ This will fix:
+
+The bash syntax error.
+
+The wrong variable check.
+
+The typos (enviorment, $ENV_vars).
+
+⚠️ But you still need to fix IAM permissions in AWS for your user/role.
+
+Do you want me to write a minimal IAM policy JSON that gives just enough permissions for your CI/CD pipeline (not full admin)?
+
+You said:
+An error occurred (AccessDeniedException) when calling the GetFunction operation: User: arn:aws:iam::503015902968:user/Temp_user is not authorized to perform: lambda:GetFunction on resource: arn:aws:lambda:eu-north-1:503015902968:function:cicd_lambda_test because no identity-based policy allows the lambda:GetFunction action
+/home/runner/work/_temp/eb7f2ca2-6218-4b37-ad73-be5b75e1ba7a.sh: line 9: syntax error in conditional expression: unexpected token ;'
+Error: Process completed with exit code 2.
+ChatGPT said:
+Thanks 🙌 now the picture is very clear.
+You still have two problems at the same time:
+
+🔴 Problem 1: IAM Access Denied
+User ...Temp_user is not authorized to perform: lambda:GetFunction
+👉 Your GitHub Action is running with AWS credentials from Temp_user, but that IAM user has no policy that allows lambda:GetFunction.
+
+✅ Fix: attach a policy to Temp_user.
+For minimum permissions needed by your CI/CD workflow, you can use something like this:
+
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "lambda:CreateFunction",
+        "lambda:GetFunction",
+        "lambda:UpdateFunctionCode",
+        "lambda:UpdateFunctionConfiguration"
+      ],
+      "Resource": "arn:aws:lambda:eu-north-1:503015902968:function:cicd_lambda_*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::503015902968:role/CICD_PIPLINE"
+    }
+  ]
+}
+First block → allows working only with your cicd_lambda_* functions.
+
+Second block → needed so Lambda can assume the IAM role you pass.
+
+🔴 Problem 2: Bash syntax
+From your log:
+
+syntax error in conditional expression: unexpected token `;'
+This comes from your if statement. You still have things like:
+
+if [[ "$function_name" == 'false']]; then
+❌ Wrong:
+
+checking the wrong variable (function_name instead of function_exists)
+
+missing space before ]]
+
+✅ Correct:
+
+if [[ "$function_exists" == "false" ]]; then
+✅ What you need to do
+Fix IAM permissions in AWS (attach the JSON policy above or use AWSLambda_FullAccess if you’re just testing).
+
+Fix your bash if statement in the GitHub Action script.
+
+Would you like me to give you a ready-to-use GitHub Actions workflow YAML (clean + fixed + minimal IAM policy) so you can just copy-paste and test?
+
+You said:
+un function_name="cicd_lambda_test"
+  function_name="cicd_lambda_test"
+  region="eu-north-1"
+  echo "deploying to lambda function :$function_name"
+  
+  # check lambda function exist or not
+  function_exists=$(aws lambda get-function --function-name $function_name --region $region || echo 'false')
+  
+  ENV_VARS="Variables={ENV=test,API_KEY=test_api_key,LOG_LEVEL=}"
+  if [[ "$function_name" == 'false' ]]; then
+      echo "create a new function $function_name..."
+      aws lambda create-function \
+          --function-name $function_name \
+          --runtime python3.11 \
+          --role arn:aws:iam::503015902968:role/CICD_PIPLINE\
+          --handler app.lambda_handler \
+          --timeout 300 \
+          --zip-file fileb://lambda.zip \
+          --region $region
+          --environment "$ENV_VARS"
+  else
+      echo "updating lambda function  $function_name"
+      aws lambda update-function-code \
+          --function-name $function_name
+          --region $region \
+          --zip-file fileb://lambda.zip
+      
+      # wait for update function
+      echo "wait for updating function $function_name"
+      while true; do
+          Updated_status=${aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text}
+  
+          if [["$Updated_status" == "Successful"]]; then
+              echo "status sucessfully updated...."
+              break
+          elif ["$Updated_status" == "Failed"]; then
+              echo "function code update failed."
+              exit 1
+          else
+              echo "update in progress, waiting..."
+              sleep 5
+          fi
+      done
+  
+      # update function configuration
+      aws lambda update-function-configuration \
+          --function-name $function_name \
+          --region $region \
+          --enviorment "$ENV_vars"
+      fi
+  shell: /usr/bin/bash -e {0}
+  env:
+    pythonLocation: /opt/hostedtoolcache/Python/3.11.13/x64
+    PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib/pkgconfig
+    Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib
+    ENV: test
+    API_KEY: test_api_key
+    LOG_LEVEL: DEBUG
+    AWS_ACCESS_KEY_ID: ***
+    AWS_SECRET_ACCESS_KEY: ***
+    AWS_DEFAULT_REGION: eu-north-1
+deploying to lambda function :cicd_lambda_test
+An error occurred (ResourceNotFoundException) when calling the GetFunction operation: Function not found: arn:aws:lambda:eu-north-1:503015902968:function:cicd_lambda_test
+updating lambda function  cicd_lambda_test
+An error occurred (ResourceNotFoundException) when calling the UpdateFunctionCode operation: Function not found: arn:aws:lambda:eu-north-1:503015902968:function:cicd_lambda_test
+Error: Process completed with exit code 254.
+ChatGPT said:
+Got it 👍 thanks for pasting the script and error.
+Right now the logic is flipped.
+
+Look at this part:
+
+function_exists=$(aws lambda get-function --function-name $function_name --region $region || echo 'false')
+
+if [[ "$function_name" == 'false' ]]; then
+    echo "create a new function $function_name..."
+    aws lambda create-function ...
+else
+    echo "updating lambda function  $function_name"
+    aws lambda update-function-code ...
+fi
+❌ Problem:
+
+You are checking function_name instead of function_exists.
+
+So even if the function does not exist, the script always goes to the else block → tries update-function → fails with Function not found.
+
+✅ Corrected version:
+
+function_name="cicd_lambda_test"
+region="eu-north-1"
+echo "deploying to lambda function : $function_name"
+
+# check lambda function exist or not
+if aws lambda get-function --function-name $function_name --region $region > /dev/null 2>&1; then
+    echo "updating lambda function $function_name"
+
+    aws lambda update-function-code \
+        --function-name $function_name \
+        --region $region \
+        --zip-file fileb://lambda.zip
+
+    echo "wait for updating function $function_name"
+    while true; do
+        Updated_status=$(aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text)
+
+        if [[ "$Updated_status" == "Successful" ]]; then
+            echo "status successfully updated...."
+            break
+        elif [[ "$Updated_status" == "Failed" ]]; then
+            echo "function code update failed."
+            exit 1
+        else
+            echo "update in progress, waiting..."
+            sleep 5
+        fi
+    done
+
+    aws lambda update-function-configuration \
+        --function-name $function_name \
+        --region $region \
+        --environment "Variables={ENV=test,API_KEY=test_api_key,LOG_LEVEL=DEBUG}"
+
+else
+    echo "create a new function $function_name..."
+
+    aws lambda create-function \
+        --function-name $function_name \
+        --runtime python3.11 \
+        --role arn:aws:iam::503015902968:role/CICD_PIPLINE \
+        --handler app.lambda_handler \
+        --timeout 300 \
+        --zip-file fileb://lambda.zip \
+        --region $region \
+        --environment "Variables={ENV=test,API_KEY=test_api_key,LOG_LEVEL=DEBUG}"
+fi
+🔑 Fixes I did:
+Correct variable → used if aws lambda get-function ... instead of checking $function_name.
+
+Fixed spacing in [[ ... ]] (your code had [[" which is invalid).
+
+Moved --environment inside both create-function and update-function-configuration.
+
+Fixed typo --enviorment → --environment.
+
+👉 If you run this now,
+
+If function exists → it updates.
+
+If function does not exist → it creates.
+
+Do you want me to also make a GitHub Actions workflow YAML with this script inside (ready to run), so you don’t need to keep editing the raw bash?
+
+You said:
+Run function_name="cicd_lambda_test"
+  function_name="cicd_lambda_test"
+  region="eu-north-1"
+  echo "deploying to lambda function :$function_name"
+  
+  # check lambda function exist or not
+  function_exists=$(aws lambda get-function --function-name $function_name --region $region || echo 'false')
+  
+  ENV_VARS="Variables={ENV=test,API_KEY=test_api_key,LOG_LEVEL=}"
+  if [[ "$function_exists" == 'false' ]]; then
+      echo "create a new function $function_name..."
+      aws lambda create-function \
+          --function-name $function_name \
+          --runtime python3.11 \
+          --role arn:aws:iam::503015902968:role/CICD_PIPLINE\
+          --handler app.lambda_handler \
+          --timeout 300 \
+          --zip-file fileb://lambda.zip \
+          --region $region
+          --environment "$ENV_VARS"
+  else
+      echo "updating lambda function  $function_name"
+      aws lambda update-function-code \
+          --function-name $function_name
+          --region $region \
+          --zip-file fileb://lambda.zip
+      
+      # wait for update function
+      echo "wait for updating function $function_name"
+      while true; do
+          Updated_status=${aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text}
+  
+          if [["$Updated_status" == "Successful"]]; then
+              echo "status sucessfully updated...."
+              break
+          elif ["$Updated_status" == "Failed"]; then
+              echo "function code update failed."
+              exit 1
+          else
+              echo "update in progress, waiting..."
+              sleep 5
+          fi
+      done
+  
+      # update function configuration
+      aws lambda update-function-configuration \
+          --function-name $function_name \
+          --region $region \
+          --enviorment "$ENV_vars"
+      fi
+  shell: /usr/bin/bash -e {0}
+  env:
+    pythonLocation: /opt/hostedtoolcache/Python/3.11.13/x64
+    PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib/pkgconfig
+    Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib
+    ENV: test
+    API_KEY: test_api_key
+    LOG_LEVEL: DEBUG
+    AWS_ACCESS_KEY_ID: ***
+    AWS_SECRET_ACCESS_KEY: ***
+    AWS_DEFAULT_REGION: eu-north-1
+deploying to lambda function :cicd_lambda_test
+An error occurred (ResourceNotFoundException) when calling the GetFunction operation: Function not found: arn:aws:lambda:eu-north-1:503015902968:function:cicd_lambda_test
+create a new function cicd_lambda_test...
+{
+    "FunctionName": "cicd_lambda_test",
+    "FunctionArn": "arn:aws:lambda:eu-north-1:503015902968:function:cicd_lambda_test",
+    "Runtime": "python3.11",
+    "Role": "arn:aws:iam::503015902968:role/CICD_PIPLINE",
+    "Handler": "app.lambda_handler",
+    "CodeSize": 47847505,
+    "Description": "",
+    "Timeout": 300,
+    "MemorySize": 128,
+    "LastModified": "2025-08-19T09:51:54.472+0000",
+    "CodeSha256": "DJFDe6De6pRv6HO+ZjnTN96IWQYedWraXWrTxGzJEGo=",
+    "Version": "$LATEST",
+    "TracingConfig": {
+        "Mode": "PassThrough"
+    },
+    "RevisionId": "c6775f78-f4c7-444e-b362-7cfab25e0b5b",
+    "State": "Pending",
+    "StateReason": "The function is being created.",
+    "StateReasonCode": "Creating",
+    "PackageType": "Zip",
+    "Architectures": [
+        "x86_64"
+    ],
+    "EphemeralStorage": {
+        "Size": 512
+    },
+    "SnapStart": {
+        "ApplyOn": "None",
+        "OptimizationStatus": "Off"
+    },
+    "RuntimeVersionConfig": {
+        "RuntimeVersionArn": "arn:aws:lambda:eu-north-1::runtime:26afe95b80f712a3037463ff3166f54bef5aa010c870d7110cc2ce1e1233a3d5"
+    },
+    "LoggingConfig": {
+        "LogFormat": "Text",
+        "LogGroup": "/aws/lambda/cicd_lambda_test"
+    }
+}
+/home/runner/work/_temp/997cab54-9d56-41ee-8a20-8969eff8dd59.sh: line 19: --environment: command not found
+Error: Process completed with exit code 127.
+ChatGPT said:
+Got it 👍 the problem is in your create-function command.
+
+Error:
+
+--environment: command not found
+That means the line break made Bash treat --environment as a new command, not as part of aws lambda create-function.
+
+Fix
+In Bash, if you want to split long commands across multiple lines, every line must end with a \.
+
+You also misspelled --environment as --enviorment in update-function-configuration.
+
+✅ Corrected script:
+
+function_name="cicd_lambda_test"
+region="eu-north-1"
+echo "deploying to lambda function :$function_name"
+
+# check lambda function exist or not
+function_exists=$(aws lambda get-function --function-name $function_name --region $region || echo 'false')
+
+ENV_VARS="Variables={ENV=test,API_KEY=test_api_key,LOG_LEVEL=DEBUG}"
+
+if [[ "$function_exists" == 'false' ]]; then
+    echo "create a new function $function_name..."
+    aws lambda create-function \
+        --function-name $function_name \
+        --runtime python3.11 \
+        --role arn:aws:iam::503015902968:role/CICD_PIPLINE \
+        --handler app.lambda_handler \
+        --timeout 300 \
+        --zip-file fileb://lambda.zip \
+        --region $region \
+        --environment "$ENV_VARS"
+else
+    echo "updating lambda function $function_name"
+    aws lambda update-function-code \
+        --function-name $function_name \
+        --region $region \
+        --zip-file fileb://lambda.zip
+    
+    echo "wait for updating function $function_name"
+    while true; do
+        Updated_status=$(aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text)
+
+        if [[ "$Updated_status" == "Successful" ]]; then
+            echo "status successfully updated...."
+            break
+        elif [[ "$Updated_status" == "Failed" ]]; then
+            echo "function code update failed."
+            exit 1
+        else
+            echo "update in progress, waiting..."
+            sleep 5
+        fi
+    done
+
+    aws lambda update-function-configuration \
+        --function-name $function_name \
+        --region $region \
+        --environment "$ENV_VARS"
+fi
+Key Fixes:
+Added \ at the end of each line in create-function.
+
+Fixed --enviorment → --environment.
+
+Corrected conditional check syntax: if [[ "$Updated_status" == "Successful" ]]; then (extra brackets removed).
+
+Filled LOG_LEVEL=DEBUG instead of empty.
+
+👉 Now it will create the Lambda with environment variables properly.
+
+Do you want me to also make it idempotent (always update if already exists, only create if not), so you don’t hit errors in CI/CD?
+
+You said:
+Run function_name="cicd_lambda_test"
+  function_name="cicd_lambda_test"
+  region="eu-north-1"
+  echo "deploying to lambda function :$function_name"
+  
+  # check lambda function exist or not
+  function_exists=$(aws lambda get-function --function-name $function_name --region $region || echo 'false')
+  
+  ENV_VARS="Variables={ENV=test,API_KEY=test_api_key,LOG_LEVEL=}"
+  if [[ "$function_exists" == 'false' ]]; then
+      echo "create a new function $function_name..."
+      aws lambda create-function \
+          --function-name $function_name \
+          --runtime python3.11 \
+          --role arn:aws:iam::503015902968:role/CICD_PIPLINE\
+          --handler app.lambda_handler \
+          --timeout 300 \
+          --zip-file fileb://lambda.zip \
+          --region $region \
+          --environment "$ENV_VARS"
+  else
+      echo "updating lambda function  $function_name"
+      aws lambda update-function-code \
+          --function-name $function_name
+          --region $region \
+          --zip-file fileb://lambda.zip
+      
+      # wait for update function
+      echo "wait for updating function $function_name"
+      while true; do
+          Updated_status=${aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text}
+  
+          if [["$Updated_status" == "Successful"]]; then
+              echo "status sucessfully updated...."
+              break
+          elif ["$Updated_status" == "Failed"]; then
+              echo "function code update failed."
+              exit 1
+          else
+              echo "update in progress, waiting..."
+              sleep 5
+          fi
+      done
+  
+      # update function configuration
+      aws lambda update-function-configuration \
+          --function-name $function_name \
+          --region $region \
+          --enviorment "$ENV_vars"
+      fi
+  shell: /usr/bin/bash -e {0}
+  env:
+    pythonLocation: /opt/hostedtoolcache/Python/3.11.13/x64
+    PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib/pkgconfig
+    Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib
+    ENV: test
+    API_KEY: test_api_key
+    LOG_LEVEL: DEBUG
+    AWS_ACCESS_KEY_ID: ***
+    AWS_SECRET_ACCESS_KEY: ***
+    AWS_DEFAULT_REGION: eu-north-1
+deploying to lambda function :cicd_lambda_test
+updating lambda function  cicd_lambda_test
+An error occurred (InvalidParameterValueException) when calling the UpdateFunctionCode operation: Please provide a source for function code.
+Error: Process completed with exit code 254.
+ChatGPT said:
+Got it 👍 The error comes from here:
+
+aws lambda update-function-code \
+    --function-name $function_name
+    --region $region \
+    --zip-file fileb://lambda.zip
+Problems in your script:
+Missing backslash after --function-name
+→ Bash thinks --region is a new command instead of part of the same AWS CLI call.
+That’s why Lambda says "Please provide a source for function code".
+
+Spelling mistake in --enviorment
+→ Correct spelling is --environment.
+
+Extra brackets spacing in if checks
+→ You wrote if [["$Updated_status" == "Successful"]]; but it should be with spaces:
+
+if [[ "$Updated_status" == "Successful" ]]; then
+✅ Fixed Script Snippet
+function_name="cicd_lambda_test"
+region="eu-north-1"
+echo "deploying to lambda function :$function_name"
+
+# check lambda function exist or not
+function_exists=$(aws lambda get-function --function-name $function_name --region $region || echo 'false')
+
+ENV_VARS="Variables={ENV=test,API_KEY=test_api_key,LOG_LEVEL=DEBUG}"
+
+if [[ "$function_exists" == 'false' ]]; then
+    echo "create a new function $function_name..."
+    aws lambda create-function \
+        --function-name $function_name \
+        --runtime python3.11 \
+        --role arn:aws:iam::503015902968:role/CICD_PIPLINE \
+        --handler app.lambda_handler \
+        --timeout 300 \
+        --zip-file fileb://lambda.zip \
+        --region $region \
+        --environment "$ENV_VARS"
+else
+    echo "updating lambda function  $function_name"
+    aws lambda update-function-code \
+        --function-name $function_name \
+        --region $region \
+        --zip-file fileb://lambda.zip
+    
+    # wait for update function
+    echo "wait for updating function $function_name"
+    while true; do
+        Updated_status=$(aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text)
+
+        if [[ "$Updated_status" == "Successful" ]]; then
+            echo "status successfully updated...."
+            break
+        elif [[ "$Updated_status" == "Failed" ]]; then
+            echo "function code update failed."
+            exit 1
+        else
+            echo "update in progress, waiting..."
+            sleep 5
+        fi
+    done
+
+    # update function configuration
+    aws lambda update-function-configuration \
+        --function-name $function_name \
+        --region $region \
+        --environment "$ENV_VARS"
+fi
+👉 Try this corrected version. It should fix the InvalidParameterValueException issue.
+
+Do you want me to also make this script GitHub Actions YAML friendly (so it plugs cleanly into your workflow)?
+
+You said:
+Run function_name="cicd_lambda_test" 
+  function_name="cicd_lambda_test"
+  region="eu-north-1"
+  echo "deploying to lambda function :$function_name"
+  
+  # check lambda function exist or not
+  function_exists=$(aws lambda get-function --function-name $function_name --region $region || echo 'false')
+  
+  ENV_VARS="Variables={ENV=test,API_KEY=test_api_key,LOG_LEVEL=}"
+  if [[ "$function_exists" == 'false' ]]; then
+      echo "create a new function $function_name..."
+      aws lambda create-function \
+          --function-name $function_name \
+          --runtime python3.11 \
+          --role arn:aws:iam::503015902968:role/CICD_PIPLINE\
+          --handler app.lambda_handler \
+          --timeout 300 \
+          --zip-file fileb://lambda.zip \
+          --region $region \
+          --environment "$ENV_VARS"
+  else
+      echo "updating lambda function  $function_name"
+      aws lambda update-function-code \
+          --function-name $function_name
+          --region $region \
+          --zip-file fileb://lambda.zip
+      
+      # wait for update function
+      echo "wait for updating function $function_name"
+      while true; do
+          Updated_status=${aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text}
+  
+          if [[ "$Updated_status" == "Successful" ]]; then
+              echo "status sucessfully updated...."
+              break
+          elif [ "$Updated_status" == "Failed" ]; then
+              echo "function code update failed."
+              exit 1
+          else
+              echo "update in progress, waiting..."
+              sleep 5
+          fi
+      done
+  
+      # update function configuration
+      aws lambda update-function-configuration \
+          --function-name $function_name \
+          --region $region \
+          --environment "$ENV_vars"
+      fi
+  shell: /usr/bin/bash -e {0}
+  env:
+    pythonLocation: /opt/hostedtoolcache/Python/3.11.13/x64
+    PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib/pkgconfig
+    Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib
+    ENV: test
+    API_KEY: test_api_key
+    LOG_LEVEL: DEBUG
+    AWS_ACCESS_KEY_ID: ***
+    AWS_SECRET_ACCESS_KEY: ***
+    AWS_DEFAULT_REGION: eu-north-1
+deploying to lambda function :cicd_lambda_test
+updating lambda function  cicd_lambda_test
+An error occurred (InvalidParameterValueException) when calling the UpdateFunctionCode operation: Please provide a source for function code.
+Error: Process completed with exit code 254.
+ChatGPT said:
+I see what’s happening 👀
+
+The InvalidParameterValueException: Please provide a source for function code comes because your command is broken into two lines at this point:
+
+aws lambda update-function-code \
+    --function-name $function_name
+    --region $region \
+    --zip-file fileb://lambda.zip
+Notice the line after --function-name — there is no backslash (\) at the end, so bash thinks that line is finished.
+As a result, the AWS CLI runs:
+
+aws lambda update-function-code --function-name cicd_lambda_test
+👉 Which is incomplete (no source code provided), so Lambda throws that error.
+
+✅ Fix
+Replace that part with:
+
+aws lambda update-function-code \
+    --function-name $function_name \
+    --region $region \
+    --zip-file fileb://lambda.zip
+⚠️ Other small issues in your script
+Wrong variable name in last step
+You wrote:
+
+--environment "$ENV_vars"
+but earlier you declared ENV_VARS (all caps). → Fix to:
+
+--environment "$ENV_VARS"
+Typo in create-function
+You wrote --role arn:aws:iam::503015902968:role/CICD_PIPLINE\ → remove the \ at the end of that line.
+
+Empty LOG_LEVEL
+Your ENV_VARS is:
+
+ENV_VARS="Variables={ENV=test,API_KEY=test_api_key,LOG_LEVEL=}"
+That leaves LOG_LEVEL empty. Maybe set it to DEBUG like your env variables:
+
+ENV_VARS="Variables={ENV=test,API_KEY=test_api_key,LOG_LEVEL=DEBUG}"
+👉 So, your corrected update-function-code section should look like this:
+
+echo "updating lambda function  $function_name"
+aws lambda update-function-code \
+    --function-name $function_name \
+    --region $region \
+    --zip-file fileb://lambda.zip
+Do you want me to give you the full fixed script in one block so you can copy-paste directly into GitHub Actions?
+
+You said:
+function_name="cicd_lambda_test"
+  region="eu-north-1"
+  echo "deploying to lambda function :$function_name"
+  
+  # check lambda function exist or not
+  function_exists=$(aws lambda get-function --function-name $function_name --region $region || echo 'false')
+  
+  ENV_VARS="Variables={ENV=test,API_KEY=test_api_key,LOG_LEVEL=}"
+  if [[ "$function_exists" == 'false' ]]; then
+      echo "create a new function $function_name..."
+      aws lambda create-function \
+          --function-name $function_name \
+          --runtime python3.11 \
+          --role arn:aws:iam::503015902968:role/CICD_PIPLINE\
+          --handler app.lambda_handler \
+          --timeout 300 \
+          --zip-file fileb://lambda.zip \
+          --region $region \
+          --environment "$ENV_VARS"
+  else
+      echo "updating lambda function  $function_name"
+      aws lambda update-function-code \
+          --function-name $function_name \
+          --region $region \
+          --zip-file fileb://lambda.zip
+      
+      # wait for update function
+      echo "wait for updating function $function_name"
+      while true; do
+          Updated_status=${aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text}
+  
+          if [[ "$Updated_status" == "Successful" ]]; then
+              echo "status sucessfully updated...."
+              break
+          elif [ "$Updated_status" == "Failed" ]; then
+              echo "function code update failed."
+              exit 1
+          else
+              echo "update in progress, waiting..."
+              sleep 5
+          fi
+      done
+  
+      # update function configuration
+      aws lambda update-function-configuration \
+          --function-name $function_name \
+          --region $region \
+          --environment "$ENV_vars"
+      fi
+  shell: /usr/bin/bash -e {0}
+  env:
+    pythonLocation: /opt/hostedtoolcache/Python/3.11.13/x64
+    PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib/pkgconfig
+    Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib
+    ENV: test
+    API_KEY: test_api_key
+    LOG_LEVEL: DEBUG
+    AWS_ACCESS_KEY_ID: ***
+    AWS_SECRET_ACCESS_KEY: ***
+    AWS_DEFAULT_REGION: eu-north-1
+deploying to lambda function :cicd_lambda_test
+updating lambda function  cicd_lambda_test
+{
+    "FunctionName": "cicd_lambda_test",
+    "FunctionArn": "arn:aws:lambda:eu-north-1:503015902968:function:cicd_lambda_test",
+    "Runtime": "python3.11",
+    "Role": "arn:aws:iam::503015902968:role/CICD_PIPLINE",
+    "Handler": "app.lambda_handler",
+    "CodeSize": 47848657,
+    "Description": "",
+    "Timeout": 300,
+    "MemorySize": 128,
+    "LastModified": "2025-08-19T10:00:15.000+0000",
+    "CodeSha256": "ziJBA97KW1QIIxCx5map65McIrgAbqsvwZMS0Z2cFtc=",
+    "Version": "$LATEST",
+    "TracingConfig": {
+        "Mode": "PassThrough"
+    },
+    "RevisionId": "295b9bb0-5e06-437c-9497-a3b32efb8391",
+    "State": "Active",
+    "LastUpdateStatus": "InProgress",
+    "LastUpdateStatusReason": "The function is being created.",
+    "LastUpdateStatusReasonCode": "Creating",
+    "PackageType": "Zip",
+    "Architectures": [
+        "x86_64"
+    ],
+    "EphemeralStorage": {
+        "Size": 512
+    },
+    "SnapStart": {
+        "ApplyOn": "None",
+        "OptimizationStatus": "Off"
+    },
+    "RuntimeVersionConfig": {
+        "RuntimeVersionArn": "arn:aws:lambda:eu-north-1::runtime:26afe95b80f712a3037463ff3166f54bef5aa010c870d7110cc2ce1e1233a3d5"
+    },
+    "LoggingConfig": {
+        "LogFormat": "Text",
+        "LogGroup": "/aws/lambda/cicd_lambda_test"
+    }
+}
+/home/runner/work/_temp/29d96838-a3ff-4b00-bf94-dea9b0921f49.sh: line 30: ${aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text}: bad substitution
+wait for updating function cicd_lambda_test
+Error: Process completed with exit code 1.
+ChatGPT said:
+Got it 👍
+The error comes from this line in your script:
+
+Updated_status=${aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text}
+$ { … } is for variable substitution, not command execution.
+You need $( … ) to run a command and store its output.
+
+Fix:
+Updated_status=$(aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text)
+Also, I noticed another issue at the bottom:
+
+--environment "$ENV_vars"
+but you defined earlier as
+
+ENV_VARS="Variables={ENV=test,API_KEY=test_api_key,LOG_LEVEL=}"
+That means the correct variable is $ENV_VARS (capital), not $ENV_vars (small).
+
+✅ Final corrected part:
+
+# wait for update function
+echo "wait for updating function $function_name"
+while true; do
+    Updated_status=$(aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text)
+
+    if [[ "$Updated_status" == "Successful" ]]; then
+        echo "status successfully updated...."
+        break
+    elif [[ "$Updated_status" == "Failed" ]]; then
+        echo "function code update failed."
+        exit 1
+    else
+        echo "update in progress, waiting..."
+        sleep 5
+    fi
+done
+
+# update function configuration
+aws lambda update-function-configuration \
+    --function-name $function_name \
+    --region $region \
+    --environment "$ENV_VARS"
+👉 Do you want me to rewrite the whole script cleanly with these fixes applied?
+
+You said:
+Run function_name="cicd_lambda_test"
+deploying to lambda function :cicd_lambda_test
+updating lambda function  cicd_lambda_test
+{
+    "FunctionName": "cicd_lambda_test",
+    "FunctionArn": "arn:aws:lambda:eu-north-1:503015902968:function:cicd_lambda_test",
+    "Runtime": "python3.11",
+    "Role": "arn:aws:iam::503015902968:role/CICD_PIPLINE",
+    "Handler": "app.lambda_handler",
+    "CodeSize": 47848743,
+    "Description": "",
+    "Timeout": 300,
+    "MemorySize": 128,
+    "LastModified": "2025-08-19T10:02:39.000+0000",
+    "CodeSha256": "p9blro0CYTMHYmffjDFyl/vSBZ8ZqDOjybv33gbAV2I=",
+    "Version": "$LATEST",
+    "TracingConfig": {
+        "Mode": "PassThrough"
+    },
+    "RevisionId": "a795e181-bbf4-4d6b-924f-fa8ff358aca1",
+    "State": "Active",
+    "LastUpdateStatus": "InProgress",
+    "LastUpdateStatusReason": "The function is being created.",
+    "LastUpdateStatusReasonCode": "Creating",
+    "PackageType": "Zip",
+    "Architectures": [
+        "x86_64"
+    ],
+    "EphemeralStorage": {
+        "Size": 512
+    },
+    "SnapStart": {
+        "ApplyOn": "None",
+        "OptimizationStatus": "Off"
+    },
+    "RuntimeVersionConfig": {
+        "RuntimeVersionArn": "arn:aws:lambda:eu-north-1::runtime:26afe95b80f712a3037463ff3166f54bef5aa010c870d7110cc2ce1e1233a3d5"
+    },
+    "LoggingConfig": {
+        "LogFormat": "Text",
+        "LogGroup": "/aws/lambda/cicd_lambda_test"
+    }
+}
+wait for updating function cicd_lambda_test
+update in progress, waiting...
+status sucessfully updated....
+
+Error parsing parameter '--environment': Expected: '=', received: 'EOF' for input:
+ 
+^
+Error: Process completed with exit code 252.
+ChatGPT said:
+Nice 👍 progress — now the wait loop works fine.
+
+The new error is from this part:
+
+Error parsing parameter '--environment': Expected: '=', received: 'EOF'
+That means AWS CLI didn’t get a proper value for --environment.
+
+Why it happened
+Your ENV_VARS was defined like this:
+
+ENV_VARS="Variables={ENV=test,API_KEY=test_api_key,LOG_LEVEL=}"
+But in AWS CLI, --environment must be JSON format, not Variables={…}.
+Correct format:
+
+--environment Variables="{ENV=test,API_KEY=test_api_key,LOG_LEVEL=DEBUG}"
+Fix
+Define the variable properly:
+
+ENV_VARS="Variables={ENV=test,API_KEY=test_api_key,LOG_LEVEL=DEBUG}"
+And then call:
+
+aws lambda update-function-configuration \
+    --function-name $function_name \
+    --region $region \
+    --environment "$ENV_VARS"
+✅ Or safer way (JSON):
+
+ENV_VARS='{"Variables":{"ENV":"test","API_KEY":"test_api_key","LOG_LEVEL":"DEBUG"}}'
+
+aws lambda update-function-configuration \
+    --function-name $function_name \
+    --region $region \
+    --environment "$ENV_VARS"
+👉 Do you want me to rewrite your whole script with the JSON-safe version (less error-prone), so you can just copy-paste?
+
+You said:
+Run function_name="cicd_lambda_test"
+  function_name="cicd_lambda_test"
+  region="eu-north-1"
+  echo "deploying to lambda function :$function_name"
+  
+  # check lambda function exist or not
+  function_exists=$(aws lambda get-function --function-name $function_name --region $region || echo 'false')
+  
+  ENV_VARS="Variables={ENV=test,API_KEY=test_api_key,LOG_LEVEL=DEBUG}"
+  if [[ "$function_exists" == 'false' ]]; then
+      echo "create a new function $function_name..."
+      aws lambda create-function \
+          --function-name $function_name \
+          --runtime python3.11 \
+          --role arn:aws:iam::503015902968:role/CICD_PIPLINE\
+          --handler app.lambda_handler \
+          --timeout 300 \
+          --zip-file fileb://lambda.zip \
+          --region $region \
+          --environment "$ENV_VARS"
+  else
+      echo "updating lambda function  $function_name"
+      aws lambda update-function-code \
+          --function-name $function_name \
+          --region $region \
+          --zip-file fileb://lambda.zip
+      
+      # wait for update function
+      echo "wait for updating function $function_name"
+      while true; do
+          Updated_status=$(aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text)
+  
+          if [[ "$Updated_status" == "Successful" ]]; then
+              echo "status sucessfully updated...."
+              break
+          elif [ "$Updated_status" == "Failed" ]; then
+              echo "function code update failed."
+              exit 1
+          else
+              echo "update in progress, waiting..."
+              sleep 5
+          fi
+      done
+  
+      # update function configuration
+      aws lambda update-function-configuration \
+          --function-name $function_name \
+          --region $region \
+          --environment "$ENV_vars"
+      fi
+  shell: /usr/bin/bash -e {0}
+  env:
+    pythonLocation: /opt/hostedtoolcache/Python/3.11.13/x64
+    PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib/pkgconfig
+    Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.13/x64
+    LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.13/x64/lib
+    ENV: test
+    API_KEY: test_api_key
+    LOG_LEVEL: DEBUG
+    AWS_ACCESS_KEY_ID: ***
+    AWS_SECRET_ACCESS_KEY: ***
+    AWS_DEFAULT_REGION: eu-north-1
+deploying to lambda function :cicd_lambda_test
+updating lambda function  cicd_lambda_test
+{
+    "FunctionName": "cicd_lambda_test",
+    "FunctionArn": "arn:aws:lambda:eu-north-1:503015902968:function:cicd_lambda_test",
+    "Runtime": "python3.11",
+    "Role": "arn:aws:iam::503015902968:role/CICD_PIPLINE",
+    "Handler": "app.lambda_handler",
+    "CodeSize": 47849118,
+    "Description": "",
+    "Timeout": 300,
+    "MemorySize": 128,
+    "LastModified": "2025-08-19T10:05:51.000+0000",
+    "CodeSha256": "EPuJa+DH/D69Up7zasWe5eKzPql8lGua7sq/4W5hlvw=",
+    "Version": "$LATEST",
+    "TracingConfig": {
+        "Mode": "PassThrough"
+    },
+    "RevisionId": "61532366-b589-4eeb-8461-1ff22e8a578b",
+    "State": "Active",
+    "LastUpdateStatus": "InProgress",
+    "LastUpdateStatusReason": "The function is being created.",
+    "LastUpdateStatusReasonCode": "Creating",
+    "PackageType": "Zip",
+    "Architectures": [
+        "x86_64"
+    ],
+    "EphemeralStorage": {
+        "Size": 512
+    },
+    "SnapStart": {
+        "ApplyOn": "None",
+        "OptimizationStatus": "Off"
+    },
+    "RuntimeVersionConfig": {
+        "RuntimeVersionArn": "arn:aws:lambda:eu-north-1::runtime:26afe95b80f712a3037463ff3166f54bef5aa010c870d7110cc2ce1e1233a3d5"
+    },
+    "LoggingConfig": {
+        "LogFormat": "Text",
+        "LogGroup": "/aws/lambda/cicd_lambda_test"
+    }
+}
+wait for updating function cicd_lambda_test
+update in progress, waiting...
+status sucessfully updated....
+
+Error parsing parameter '--environment': Expected: '=', received: 'EOF' for input:
+ 
+^
+Error: Process completed with exit code 252.
+ChatGPT said:
+I see the exact problem 👍
+
+At the very end of your script you wrote:
+
+aws lambda update-function-configuration \
+    --function-name $function_name \
+    --region $region \
+    --environment "$ENV_vars"
+But your variable is ENV_VARS (uppercase S), not ENV_vars (lowercase s).
+
+So "$ENV_vars" is empty, that’s why AWS CLI sees nothing and throws:
+
+Error parsing parameter '--environment': Expected: '=', received: 'EOF'
+✅ Fix
+Change:
+
+--environment "$ENV_vars"
+to:
+
+--environment "$ENV_VARS"
+Also, safer JSON format (recommended):
+Instead of
+
+ENV_VARS="Variables={ENV=test,API_KEY=test_api_key,LOG_LEVEL=DEBUG}"
+use JSON:
+
+ENV_VARS='{"Variables":{"ENV":"test","API_KEY":"test_api_key","LOG_LEVEL":"DEBUG"}}'
+and pass it as:
+
+--environment "$ENV_VARS"
+👉 Do you want me to rewrite your full script with the JSON-safe format so you don’t hit this again?
+
+You said:
+
+  "errorMessage": "Unable to import module 'app': Unable to import required dependencies:\nnumpy: Error importing numpy: you should not try to import numpy from\n        its source directory; please exit the numpy source tree, and relaunch\n        your python interpreter from there.",
+  "errorType": "Runtime.ImportModuleError",
+  "requestId": "",
+  "stackTrace": []
+}
+show when you run your lambda function
+
+ChatGPT said:
+Got it 👍
+That error happens after deployment, when AWS Lambda tries to run your function.
+
+The key part is:
+
+numpy: Error importing numpy: you should not try to import numpy from its source directory
+Why this happens
+You packaged your code with numpy (probably by just zipping the project folder).
+
+Inside the zip, the numpy folder looks like a source repo instead of an installed library.
+Lambda expects the compiled numpy wheel (.so files) for Amazon Linux, not the raw source.
+
+So when your function imports numpy, it crashes.
+
+✅ Fix options
+There are 3 ways to solve this:
+
+1. Use AWS Lambda Layer for numpy (best way)
+Don’t package numpy in your zip.
+
+Create a Lambda Layer with numpy:
+
+pip install numpy -t python
+zip -r numpy_layer.zip python
+aws lambda publish-layer-version \
+    --layer-name numpy \
+    --zip-file fileb://numpy_layer.zip \
+    --compatible-runtimes python3.11
+Then attach this layer to your Lambda.
+
+2. Install numpy correctly in packages/ (inside CI/CD)
+Instead of copying the whole numpy source, build it for Lambda:
+
+pip install --platform manylinux2014_x86_64 --target ./packages --implementation cp --python 3.11 --only-binary=:all: numpy
+Then zip your code with packages/.
+
+3. Use AWS prebuilt AWS SDK / scientific libraries
+AWS already provides precompiled numpy/scipy in some AWS Lambda layers (like AWSLambda-PythonSciPy1x).
+You can just add them under Layers in the console.
+
+👉 Quick question, Rudra:
+Do you want me to fix your GitHub Actions deploy script so it automatically builds numpy correctly for Lambda (option 2), or do you want the simple layer approach (option 1)?
+
+You said:
+but i add numpy in requirments.txt file
+ChatGPT said:
+Yes Rudra 👍 you did right by putting numpy in requirements.txt.
+
+But here’s the catch 👇
+
+When GitHub Actions runs pip install -r requirements.txt -t packages/, it installs numpy for Ubuntu (GitHub runner OS).
+That build doesn’t work in AWS Lambda, because Lambda uses Amazon Linux.
+
+So the zip contains the wrong numpy files → that’s why you saw:
+
+you should not try to import numpy from its source directory
+✅ How to fix while still using requirements.txt
+In your GitHub Actions workflow, instead of normal pip install, use cross-platform build:
+
+- name: Install dependencies for Lambda
+  run: |
+    pip install \
+      --platform manylinux2014_x86_64 \
+      --target ./packages \
+      --implementation cp \
+      --python 3.11 \
+      --only-binary=:all: \
+      -r requirements.txt
+This makes pip download precompiled binary wheels (compatible with Lambda’s Amazon Linux) instead of source code.
+
+Then zip like before:
+
+- name: Zip Lambda code
+  run: |
+    zip -r lambda.zip packages/ app.py
+👉 So, your requirements.txt is fine, but you need this special pip install command in CI/CD.
+
+Do you want me to rewrite your full GitHub Actions workflow with this fix included?
+
+You said:
 name: Deploy Lambda
 
 on:
@@ -97,3 +2011,115 @@ jobs:
                     --region $region \
                     --environment "$ENV_VARS"
                 fi
+this is my code plese add 
+ChatGPT said:
+Got it Rudra 👍
+Your workflow is almost correct — only problem is numpy and other heavy libs need to be installed with a --platform manylinux2014_x86_64 flag (so they work inside AWS Lambda).
+
+I’ll update your workflow to fix that and also correct the --environment issue you faced earlier.
+
+Here’s the fixed GitHub Actions workflow 👇
+
+name: Deploy Lambda
+
+on:
+  push:
+    branches:
+      - main
+      - test
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install AWS CLI
+        run: pip install awscli boto3
+
+      - name: Set environment variables
+        run: |
+          if [[ "${{ github.ref_name }}" == "main" ]]; then
+              echo "ENV=prod" >> $GITHUB_ENV
+              echo "API_KEY=prod_api_key" >> $GITHUB_ENV
+              echo "LOG_LEVEL=INFO" >> $GITHUB_ENV
+          else
+              echo "ENV=test" >> $GITHUB_ENV
+              echo "API_KEY=test_api_key" >> $GITHUB_ENV
+              echo "LOG_LEVEL=DEBUG" >> $GITHUB_ENV
+          fi
+
+      - name: Package Lambda function (with compatible dependencies)
+        run: |
+          cd lambda_function
+          mkdir package
+          pip install \
+            --platform manylinux2014_x86_64 \
+            --target ./package \
+            --implementation cp \
+            --python 3.11 \
+            --only-binary=:all: \
+            -r requirements.txt
+          cp app.py ./package/
+          cd package
+          zip -r ../../lambda.zip .
+          cd ../..
+
+      - name: Deploy to AWS Lambda
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: eu-north-1
+        run: |
+          function_name="cicd_lambda_${{ github.ref_name }}"
+          region="eu-north-1"
+          echo "deploying to lambda function :$function_name"
+
+          # check lambda function exists
+          if ! aws lambda get-function --function-name $function_name --region $region >/dev/null 2>&1; then
+              echo "create a new function $function_name..."
+              aws lambda create-function \
+                  --function-name $function_name \
+                  --runtime python3.11 \
+                  --role arn:aws:iam::503015902968:role/CICD_PIPLINE \
+                  --handler app.lambda_handler \
+                  --timeout 300 \
+                  --zip-file fileb://lambda.zip \
+                  --region $region \
+                  --environment Variables="{ENV=${ENV},API_KEY=${API_KEY},LOG_LEVEL=${LOG_LEVEL}}"
+          else
+              echo "updating lambda function $function_name"
+              aws lambda update-function-code \
+                  --function-name $function_name \
+                  --region $region \
+                  --zip-file fileb://lambda.zip
+
+              # wait for update to finish
+              echo "wait for updating function $function_name"
+              while true; do
+                  Updated_status=$(aws lambda get-function --function-name $function_name --region $region --query 'Configuration.LastUpdateStatus' --output text)
+                  if [[ "$Updated_status" == "Successful" ]]; then
+                      echo "status successfully updated...."
+                      break
+                  elif [[ "$Updated_status" == "Failed" ]]; then
+                      echo "function code update failed."
+                      exit 1
+                  else
+                      echo "update in progress, waiting..."
+                      sleep 5
+                  fi
+              done
+
+              # update function configuration
+              aws lambda update-function-configuration \
+                  --function-name $function_name \
+                  --region $region \
+                  --environment Variables="{ENV=${ENV},API_KEY=${API_KEY},LOG_LEVEL=${LOG_LEVEL}}"
+          fi
