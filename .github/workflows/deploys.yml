@@ -56,7 +56,7 @@ jobs:
             function_exists=$(aws lambda get-function --function-name $function_name --region $region || echo 'false')
 
             ENV_VARS="Variables={ENV=${{ env.ENV }},API_KEY=${{env.API_KEY}},LOG_LEVEL=${{ env.LOGLEVEL}}}"
-            if [[ "$function_name" == 'false' ]]; then
+            if [[ "$function_exists" == 'false' ]]; then
                 echo "create a new function $function_name..."
                 aws lambda create-function \
                     --function-name $function_name \
